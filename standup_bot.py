@@ -25,6 +25,18 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 STANDUP_CHANNEL_ID = "C0B7L91PYD7"
 
 # ─────────────────────────────────────────────
+# CLIENTS — add new clients here as needed
+# ─────────────────────────────────────────────
+
+CLIENTS = [
+    "VIA",
+    "SA Digital Connects (SADC)",
+    "Future Workforce Summit",
+    "General BFI",
+    "Other"
+]
+
+# ─────────────────────────────────────────────
 # TINY WEB SERVER (keeps Render happy on free tier)
 # ─────────────────────────────────────────────
 
@@ -64,9 +76,9 @@ def log_to_sheet(user_name, responses):
     row = [
         datetime.now().strftime("%Y-%m-%d"),
         user_name,
+        responses.get("client", ""),
         responses.get("project", ""),
-        responses.get("tasks", ""),
-        responses.get("time", ""),
+        responses.get("tasks_and_time", ""),
         responses.get("blockers", "")
     ]
     sheet.append_row(row)
@@ -77,11 +89,15 @@ def log_to_sheet(user_name, responses):
 
 user_sessions = {}
 
+def build_client_question():
+    client_list = "\n".join([f"{i+1}️⃣ {c}" for i, c in enumerate(CLIENTS)])
+    return f"👋 Hey! Time for your daily standup.\n\n*Which client is this work for?*\n{client_list}"
+
 QUESTIONS = [
-    ("project",  "👋 Hey! Time for your daily standup.\n\n*What project are you currently working on?*"),
-    ("tasks",    "*What tasks did you complete today?* (list them out, one per line is great)"),
-    ("time",     "*How long did you spend on each task?* (e.g. 'Bug fix — 2h, Code review — 1h')"),
-    ("blockers", "*Any blockers or anything you need help with?* (type 'none' if all good 👍)")
+    ("client",         build_client_question()),
+    ("project",        "*What project are you working on?*"),
+    ("tasks_and_time", "*What tasks did you complete today and how long did you spend on each?*\nList each on a new line, for example:\n> BFI Roadmap — 2h\n> Standup Bot — 1h\n> Hosting — 30min"),
+    ("blockers",       "*Any blockers or anything you need help with?* (type 'none' if all good 👍)")
 ]
 
 # ─────────────────────────────────────────────
@@ -96,10 +112,23 @@ def get_next_question(session):
             return key, text
     return None, None
 
+def parse_client(text):
+    """Match a number or text to a client name."""
+    text = text.strip()
+    # Check if they typed a number
+    if text.isdigit():
+        index = int(text) - 1
+        if 0 <= index < len(CLIENTS):
+            return CLIENTS[index]
+    # Check if they typed the client name directly
+    for client in CLIENTS:
+        if client.lower() in text.lower():
+            return client
+    return text  # fallback to whatever they typed
+
 def start_standup(user_id, client):
     user_sessions[user_id] = {}
-    _, first_question = QUESTIONS[0]
-    client.chat_postMessage(channel=user_id, text=first_question)
+    client.chat_postMessage(channel=user_id, text=build_client_question())
 
 def trigger_channel_standups(client):
     response = client.conversations_members(channel=STANDUP_CHANNEL_ID)
@@ -130,7 +159,12 @@ def handle_dm(message, client, say):
         start_standup(user_id, client)
         return
 
-    session[next_key] = text
+    # Parse client selection if that's the current question
+    if next_key == "client":
+        session["client"] = parse_client(text)
+    else:
+        session[next_key] = text
+
     next_key2, next_question = get_next_question(session)
 
     if next_question:
@@ -144,9 +178,9 @@ def handle_dm(message, client, say):
             say(
                 f"✅ Got it, thanks {user_name.split()[0]}! Your standup has been logged.\n\n"
                 f"*Summary:*\n"
+                f"• *Client:* {session['client']}\n"
                 f"• *Project:* {session['project']}\n"
-                f"• *Tasks:* {session['tasks']}\n"
-                f"• *Time spent:* {session['time']}\n"
+                f"• *Tasks & Time:* {session['tasks_and_time']}\n"
                 f"• *Blockers:* {session['blockers']}"
             )
         except Exception as e:
@@ -194,14 +228,11 @@ def schedule_standups():
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Run Flask in background thread (keeps Render free tier happy)
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Run scheduler in background thread
     scheduler_thread = threading.Thread(target=schedule_standups, daemon=True)
     scheduler_thread.start()
 
-    # Start the Slack bot
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
