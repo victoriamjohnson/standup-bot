@@ -153,22 +153,19 @@ def handle_dm(message, client, say):
 
     session = user_sessions[user_id]
 
-    # Handle "another client?" follow-up
     if session.get("awaiting_another_client"):
         if text.lower() in ["no", "nope", "n", "done", "no thanks"]:
             say("✅ All done! Thanks for your standups today, have a great rest of your day! 👋")
             del user_sessions[user_id]
         else:
-            # They want to log another client — reset for a new entry but keep blockers
             blockers = session.get("blockers", "none")
             user_sessions[user_id] = {
                 "awaiting_another_client": False,
-                "blockers": blockers  # carry blockers over so we don't ask again
+                "blockers": blockers
             }
-            # Parse their client selection
             session = user_sessions[user_id]
             session["client"] = parse_client(text)
-            say(QUESTIONS[1][1])  # ask tasks and time
+            say(QUESTIONS[1][1])
         return
 
     next_key, _ = get_next_question(session)
@@ -187,7 +184,6 @@ def handle_dm(message, client, say):
     if next_question:
         say(next_question)
     else:
-        # All questions answered — log to sheet
         user_info = client.users_info(user=user_id)
         user_name = user_info["user"]["real_name"]
 
@@ -203,7 +199,6 @@ def handle_dm(message, client, say):
         except Exception as e:
             say(f"⚠️ Something went wrong logging to Google Sheets: {str(e)}")
 
-        # Ask if they worked on another client
         session["awaiting_another_client"] = True
         say(build_another_client_question())
 
@@ -219,24 +214,31 @@ def handle_standup_all_command(ack, body, client):
     trigger_channel_standups(client)
 
 # ─────────────────────────────────────────────
-# SCHEDULER — DMs bfi-summer-2026 at 3pm Mon-Fri
+# SCHEDULER — 3pm Central Time (San Antonio) Mon-Fri
+# Handles daylight saving automatically
 # ─────────────────────────────────────────────
 
 def schedule_standups():
+    import pytz
     import schedule
     import time
     from slack_sdk import WebClient
 
     sdk_client = WebClient(token=SLACK_BOT_TOKEN)
+    central = pytz.timezone("America/Chicago")
 
     def trigger_all():
+        now = datetime.now(central)
         trigger_channel_standups(sdk_client)
 
-    schedule.every().monday.at("15:00").do(trigger_all)
-    schedule.every().tuesday.at("15:00").do(trigger_all)
-    schedule.every().wednesday.at("15:00").do(trigger_all)
-    schedule.every().thursday.at("15:00").do(trigger_all)
-    schedule.every().friday.at("15:00").do(trigger_all)
+    def check_and_trigger():
+        now = datetime.now(central)
+        # Only trigger on weekdays at 3pm Central
+        if now.weekday() < 5 and now.hour == 15 and now.minute == 30:
+            trigger_all()
+
+    # Check every minute
+    schedule.every().minute.do(check_and_trigger)
 
     while True:
         schedule.run_pending()
