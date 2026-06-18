@@ -1,0 +1,5 @@
+slack-bolt
+slack-sdk
+gspread
+google-auth
+python-dotenv
