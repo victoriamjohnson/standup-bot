@@ -1,4 +1,5 @@
 import os
+import json
 import gspread
 from datetime import datetime
 from dotenv import load_dotenv
@@ -15,8 +16,11 @@ load_dotenv()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
-GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
+# Channel ID for bfi-summer-2026
+STANDUP_CHANNEL_ID = "C0B7L91PYD7"
 
 # ─────────────────────────────────────────────
 # GOOGLE SHEETS SETUP
@@ -27,7 +31,16 @@ def get_sheet():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=scopes)
+
+    if GOOGLE_CREDENTIALS_JSON:
+        # Running on Render — load from environment variable
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    else:
+        # Running locally — load from credentials.json file
+        creds_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
+        creds = Credentials.from_service_account_file(creds_file, scopes=scopes)
+
     client = gspread.authorize(creds)
     sheet = client.open_by_key(SPREADSHEET_ID).sheet1
     return sheet
@@ -45,7 +58,7 @@ def log_to_sheet(user_name, responses):
     sheet.append_row(row)
 
 # ─────────────────────────────────────────────
-# BOT STATE (tracks where each user is in the flow)
+# BOT STATE
 # ─────────────────────────────────────────────
 
 user_sessions = {}
@@ -73,6 +86,17 @@ def start_standup(user_id, client):
     user_sessions[user_id] = {}
     _, first_question = QUESTIONS[0]
     client.chat_postMessage(channel=user_id, text=first_question)
+
+def trigger_channel_standups(client):
+    """Fetches all members of bfi-summer-2026 and DMs each one."""
+    response = client.conversations_members(channel=STANDUP_CHANNEL_ID)
+    members = response["members"]
+    for user_id in members:
+        # Skip bots and Slackbot
+        user_info = client.users_info(user=user_id)
+        user = user_info["user"]
+        if not user.get("is_bot") and not user.get("deleted") and user_id != "USLACKBOT":
+            start_standup(user_id, client)
 
 @app.message("")
 def handle_dm(message, client, say):
@@ -124,16 +148,43 @@ def handle_standup_command(ack, body, client):
     user_id = body["user_id"]
     start_standup(user_id, client)
 
-def trigger_all_standups(team_user_ids: list):
+@app.command("/standup-all")
+def handle_standup_all_command(ack, body, client):
+    ack()
+    trigger_channel_standups(client)
+
+# ─────────────────────────────────────────────
+# SCHEDULER — DMs bfi-summer-2026 at 3pm Mon-Fri
+# ─────────────────────────────────────────────
+
+def schedule_standups():
+    import schedule
+    import time
     from slack_sdk import WebClient
-    client = WebClient(token=SLACK_BOT_TOKEN)
-    for user_id in team_user_ids:
-        start_standup(user_id, client)
+
+    sdk_client = WebClient(token=SLACK_BOT_TOKEN)
+
+    def trigger_all():
+        trigger_channel_standups(sdk_client)
+
+    schedule.every().monday.at("15:00").do(trigger_all)
+    schedule.every().tuesday.at("15:00").do(trigger_all)
+    schedule.every().wednesday.at("15:00").do(trigger_all)
+    schedule.every().thursday.at("15:00").do(trigger_all)
+    schedule.every().friday.at("15:00").do(trigger_all)
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
 
 # ─────────────────────────────────────────────
 # RUN
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import threading
+    scheduler_thread = threading.Thread(target=schedule_standups, daemon=True)
+    scheduler_thread.start()
+
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()

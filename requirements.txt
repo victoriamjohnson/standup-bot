@@ -3,3 +3,4 @@ slack-sdk
 gspread
 google-auth
 python-dotenv
+schedule
