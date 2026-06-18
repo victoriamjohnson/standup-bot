@@ -77,7 +77,6 @@ def log_to_sheet(user_name, responses):
         datetime.now().strftime("%Y-%m-%d"),
         user_name,
         responses.get("client", ""),
-        responses.get("project", ""),
         responses.get("tasks_and_time", ""),
         responses.get("blockers", "")
     ]
@@ -90,13 +89,12 @@ def log_to_sheet(user_name, responses):
 user_sessions = {}
 
 def build_client_question():
-    client_list = "\n".join([f"{i+1}️⃣ {c}" for i, c in enumerate(CLIENTS)])
+    client_list = "\n".join([f"{i+1}. {c}" for i, c in enumerate(CLIENTS)])
     return f"👋 Hey! Time for your daily standup.\n\n*Which client is this work for?*\n{client_list}"
 
 QUESTIONS = [
     ("client",         build_client_question()),
-    ("project",        "*What project are you working on?*"),
-    ("tasks_and_time", "*What tasks did you complete today and how long did you spend on each?*\nList each on a new line, for example:\n> BFI Roadmap — 2h\n> Standup Bot — 1h\n> Hosting — 30min"),
+    ("tasks_and_time", "*What tasks did you complete today and how long did you spend on each?*\n\nList each task on a new line:\n```Task name - 3h\nTask name - 45min```"),
     ("blockers",       "*Any blockers or anything you need help with?* (type 'none' if all good 👍)")
 ]
 
@@ -113,18 +111,15 @@ def get_next_question(session):
     return None, None
 
 def parse_client(text):
-    """Match a number or text to a client name."""
     text = text.strip()
-    # Check if they typed a number
     if text.isdigit():
         index = int(text) - 1
         if 0 <= index < len(CLIENTS):
             return CLIENTS[index]
-    # Check if they typed the client name directly
     for client in CLIENTS:
         if client.lower() in text.lower():
             return client
-    return text  # fallback to whatever they typed
+    return text
 
 def start_standup(user_id, client):
     user_sessions[user_id] = {}
@@ -159,7 +154,6 @@ def handle_dm(message, client, say):
         start_standup(user_id, client)
         return
 
-    # Parse client selection if that's the current question
     if next_key == "client":
         session["client"] = parse_client(text)
     else:
@@ -179,7 +173,6 @@ def handle_dm(message, client, say):
                 f"✅ Got it, thanks {user_name.split()[0]}! Your standup has been logged.\n\n"
                 f"*Summary:*\n"
                 f"• *Client:* {session['client']}\n"
-                f"• *Project:* {session['project']}\n"
                 f"• *Tasks & Time:* {session['tasks_and_time']}\n"
                 f"• *Blockers:* {session['blockers']}"
             )
