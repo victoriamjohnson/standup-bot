@@ -92,6 +92,10 @@ def build_client_question():
     client_list = "\n".join([f"{i+1}. {c}" for i, c in enumerate(CLIENTS)])
     return f"👋 Hey! Time for your daily standup.\n\n*Which client is this work for?*\n{client_list}"
 
+def build_another_client_question():
+    client_list = "\n".join([f"{i+1}. {c}" for i, c in enumerate(CLIENTS)])
+    return f"*Did you work on any other clients today?*\n\nType *no* if you're done, or pick another client:\n{client_list}"
+
 QUESTIONS = [
     ("client",         build_client_question()),
     ("tasks_and_time", "*What tasks did you complete today and how long did you spend on each?*\n\nList each task on a new line:\n```Task name - 3h\nTask name - 45min```"),
@@ -122,7 +126,7 @@ def parse_client(text):
     return text
 
 def start_standup(user_id, client):
-    user_sessions[user_id] = {}
+    user_sessions[user_id] = {"awaiting_another_client": False}
     client.chat_postMessage(channel=user_id, text=build_client_question())
 
 def trigger_channel_standups(client):
@@ -148,6 +152,25 @@ def handle_dm(message, client, say):
         return
 
     session = user_sessions[user_id]
+
+    # Handle "another client?" follow-up
+    if session.get("awaiting_another_client"):
+        if text.lower() in ["no", "nope", "n", "done", "no thanks"]:
+            say("✅ All done! Thanks for your standups today, have a great rest of your day! 👋")
+            del user_sessions[user_id]
+        else:
+            # They want to log another client — reset for a new entry but keep blockers
+            blockers = session.get("blockers", "none")
+            user_sessions[user_id] = {
+                "awaiting_another_client": False,
+                "blockers": blockers  # carry blockers over so we don't ask again
+            }
+            # Parse their client selection
+            session = user_sessions[user_id]
+            session["client"] = parse_client(text)
+            say(QUESTIONS[1][1])  # ask tasks and time
+        return
+
     next_key, _ = get_next_question(session)
 
     if next_key is None:
@@ -164,13 +187,14 @@ def handle_dm(message, client, say):
     if next_question:
         say(next_question)
     else:
+        # All questions answered — log to sheet
         user_info = client.users_info(user=user_id)
         user_name = user_info["user"]["real_name"]
 
         try:
             log_to_sheet(user_name, session)
             say(
-                f"✅ Got it, thanks {user_name.split()[0]}! Your standup has been logged.\n\n"
+                f"✅ Logged!\n\n"
                 f"*Summary:*\n"
                 f"• *Client:* {session['client']}\n"
                 f"• *Tasks & Time:* {session['tasks_and_time']}\n"
@@ -179,7 +203,9 @@ def handle_dm(message, client, say):
         except Exception as e:
             say(f"⚠️ Something went wrong logging to Google Sheets: {str(e)}")
 
-        del user_sessions[user_id]
+        # Ask if they worked on another client
+        session["awaiting_another_client"] = True
+        say(build_another_client_question())
 
 @app.command("/standup")
 def handle_standup_command(ack, body, client):
