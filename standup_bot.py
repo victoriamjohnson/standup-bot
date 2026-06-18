@@ -1,8 +1,10 @@
 import os
 import json
+import threading
 import gspread
 from datetime import datetime
 from dotenv import load_dotenv
+from flask import Flask
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from google.oauth2.service_account import Credentials
@@ -23,6 +25,20 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 STANDUP_CHANNEL_ID = "C0B7L91PYD7"
 
 # ─────────────────────────────────────────────
+# TINY WEB SERVER (keeps Render happy on free tier)
+# ─────────────────────────────────────────────
+
+flask_app = Flask(__name__)
+
+@flask_app.route("/")
+def home():
+    return "Standup bot is running!", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host="0.0.0.0", port=port)
+
+# ─────────────────────────────────────────────
 # GOOGLE SHEETS SETUP
 # ─────────────────────────────────────────────
 
@@ -33,11 +49,9 @@ def get_sheet():
     ]
 
     if GOOGLE_CREDENTIALS_JSON:
-        # Running on Render — load from environment variable
         creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     else:
-        # Running locally — load from credentials.json file
         creds_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
         creds = Credentials.from_service_account_file(creds_file, scopes=scopes)
 
@@ -88,11 +102,9 @@ def start_standup(user_id, client):
     client.chat_postMessage(channel=user_id, text=first_question)
 
 def trigger_channel_standups(client):
-    """Fetches all members of bfi-summer-2026 and DMs each one."""
     response = client.conversations_members(channel=STANDUP_CHANNEL_ID)
     members = response["members"]
     for user_id in members:
-        # Skip bots and Slackbot
         user_info = client.users_info(user=user_id)
         user = user_info["user"]
         if not user.get("is_bot") and not user.get("deleted") and user_id != "USLACKBOT":
@@ -182,9 +194,14 @@ def schedule_standups():
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import threading
+    # Run Flask in background thread (keeps Render free tier happy)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Run scheduler in background thread
     scheduler_thread = threading.Thread(target=schedule_standups, daemon=True)
     scheduler_thread.start()
 
+    # Start the Slack bot
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
