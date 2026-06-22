@@ -110,13 +110,18 @@ def build_welcome_message():
     clients = get_clients()
     client_list = "\n".join([f"{i+1}. {c}" for i, c in enumerate(clients)])
     return (
-        "👋 Hi! I'm *BRIEFI*, your daily standup bot for the Better Futures Institute.\n\n"
-        "I'll ask you *3 quick questions* about your work today. It takes less than 2 minutes!\n\n"
-        "📋 If you worked on *multiple clients* today, don't worry — I'll ask you at the end if you need to log another one and walk you through it again.\n\n"
-        "💡 *Tip:* If you make a mistake at any point, just type *restart* to start over from the beginning.\n\n"
-        "⏰ You have until *12pm tomorrow* to complete this standup.\n\n"
-        "─────────────────────\n"
-        "Let's go! *Which client did you work on today?*\n\n"
+        "😸 Hi! I'm *BRIEFI*, the Better Futures Institute's daily standup bot.\n\n"
+        "I'll walk you through *3 quick questions* about your work today.\n\n"
+        "*Here's what to expect:*\n"
+        "1. Which client you worked on\n"
+        "2. What tasks you completed and how long each took\n"
+        "3. Any blockers or things you need help with\n\n"
+        "If you worked on *multiple clients* today, I'll ask you to complete a standup for each one — I'll prompt you at the end.\n\n"
+        "Made a mistake? Type *restart* at any time to start over.\n\n"
+        "You have until *12pm tomorrow* to complete today's standup.\n\n"
+        "─────────────────────\n\n"
+        "*Question 1 of 3 — Which client did you work on today?*\n"
+        "Reply with the number next to your client:\n\n"
         f"{client_list}"
     )
 
@@ -125,18 +130,18 @@ def build_another_client_question():
     client_list = "\n".join([f"{i+1}. {c}" for i, c in enumerate(clients)])
     return (
         "*Did you work on any other clients today?*\n\n"
-        "Type *no* if you're all done, or pick another client below:\n\n"
+        "Type *NO* if you are all done.\n"
+        "Or reply with the number of the next client:\n\n"
         f"{client_list}"
     )
 
 def build_task_modal(num_tasks=1, existing_tasks=None, private_metadata=""):
-    """Builds the task entry modal with dynamic task rows."""
     blocks = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "Add each task you completed today and how long it took.\n*Click 'Add Task' to add more rows.*"
+                "text": "*Enter each task you completed today and how long it took.*\n\nUse the *Add Task* button at the bottom to add more rows. When you are done, click *Submit*."
             }
         },
         {"type": "divider"}
@@ -156,7 +161,7 @@ def build_task_modal(num_tasks=1, existing_tasks=None, private_metadata=""):
             "element": {
                 "type": "plain_text_input",
                 "action_id": f"task_input_{i}",
-                "placeholder": {"type": "plain_text", "text": "e.g. Fixed login bug"},
+                "placeholder": {"type": "plain_text", "text": "e.g. Updated client report"},
                 "initial_value": task_val
             },
             "label": {"type": "plain_text", "text": f"Task {i+1}"}
@@ -181,7 +186,7 @@ def build_task_modal(num_tasks=1, existing_tasks=None, private_metadata=""):
         "elements": [
             {
                 "type": "button",
-                "text": {"type": "plain_text", "text": "➕ Add Task"},
+                "text": {"type": "plain_text", "text": "+ Add Another Task"},
                 "action_id": "add_task_button",
                 "value": str(num_tasks)
             }
@@ -237,11 +242,35 @@ def trigger_channel_standups(client):
             start_standup(user_id, client)
 
 def open_task_modal(client, trigger_id, user_id, num_tasks=1, existing_tasks=None):
-    """Opens the task entry modal."""
     metadata = json.dumps({"user_id": user_id, "num_tasks": num_tasks})
     client.views_open(
         trigger_id=trigger_id,
         view=build_task_modal(num_tasks, existing_tasks, private_metadata=metadata)
+    )
+
+def send_task_button(say):
+    say(
+        blocks=[
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Question 2 of 3 — What tasks did you complete today?*\n\nClick the button below to open the task form. You can log as many tasks as you need."
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Enter Tasks"},
+                        "action_id": "open_task_modal_button",
+                        "style": "primary"
+                    }
+                ]
+            }
+        ],
+        text="Click the button below to log your tasks."
     )
 
 @app.message("")
@@ -256,10 +285,9 @@ def handle_dm(message, client, say):
     # Handle restart at any point
     if text.lower() in RESTART_KEYWORDS:
         user_sessions[user_id] = {"awaiting_another_client": False}
-        say("🔄 No problem! Let's start over from the beginning.\n\n" + build_welcome_message())
+        say("😼 No problem! Let's start over.\n\n" + build_welcome_message())
         return
 
-    # No active session — start a new one
     if user_id not in user_sessions:
         start_standup(user_id, client)
         return
@@ -270,8 +298,8 @@ def handle_dm(message, client, say):
     if session.get("awaiting_another_client"):
         if text.lower() in ["no", "nope", "n", "done", "no thanks"]:
             say(
-                "✅ All done! Thanks for completing your standup today.\n\n"
-                "Your responses have been logged. Have a great rest of your day! 👋"
+                "😺 All done! Your standup has been logged for today.\n\n"
+                "See you tomorrow!"
             )
             del user_sessions[user_id]
         else:
@@ -282,19 +310,9 @@ def handle_dm(message, client, say):
             }
             session = user_sessions[user_id]
             session["client"] = parse_client(text)
-            say(
-                "*What tasks did you complete for this client and how long did you spend on each?*\n\n"
-                "Click the button below to open the task form 👇",
-                attachments=[{
-                    "fallback": "Open task form",
-                    "callback_id": "open_task_modal",
-                    "actions": [{
-                        "type": "button",
-                        "text": "📝 Enter Tasks",
-                        "action_id": "open_task_modal_button"
-                    }]
-                }]
-            )
+            session["tasks_and_time"] = "__PENDING__"
+            session["awaiting_task_modal"] = True
+            send_task_button(say)
         return
 
     next_key = get_next_question(session)
@@ -305,46 +323,30 @@ def handle_dm(message, client, say):
 
     if next_key == "client":
         session["client"] = parse_client(text)
-        # After client is selected, ask blockers first (tasks use modal)
-        say(
-            f"Got it — *{session['client']}*! ✅\n\n"
-            "*Any blockers or anything you need help with?*\n(Type *none* if you're all good 👍)"
-        )
-        # Skip tasks_and_time for now, mark blockers as next
         session["tasks_and_time"] = "__PENDING__"
-
-    elif next_key == "tasks_and_time":
-        # This shouldn't normally be hit since modal handles it
-        pass
+        session["awaiting_task_modal"] = True
+        send_task_button(say)
 
     elif next_key == "blockers":
         session["blockers"] = text
-        session["tasks_and_time"] = "__PENDING__"
-        session["awaiting_task_modal"] = True
-        # Send button using Block Kit so it renders as a real clickable button
-        say(
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "Almost done! Click the button below to log your tasks and time spent 👇\n\n💡 You can add as many tasks as you need using the *Add Task* button inside the form."
-                    }
-                },
-                {
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "📝 Enter Tasks"},
-                            "action_id": "open_task_modal_button",
-                            "style": "primary"
-                        }
-                    ]
-                }
-            ],
-            text="Almost done! Click the button below to log your tasks."
-        )
+
+        user_info = client.users_info(user=user_id)
+        user_name = user_info["user"]["real_name"]
+
+        try:
+            log_to_sheet(user_name, session)
+            say(
+                f"Logged! Here is your summary:\n\n"
+                f"*Client:* {session['client']}\n"
+                f"*Tasks & Time:*\n{session['tasks_and_time']}\n"
+                f"*Blockers:* {session['blockers']}\n\n"
+                f"Logged for workday: *{get_workday_date()}*"
+            )
+        except Exception as e:
+            say(f"Something went wrong logging to Google Sheets: {str(e)}")
+
+        session["awaiting_another_client"] = True
+        say(build_another_client_question())
 
 @app.action("open_task_modal_button")
 def handle_open_modal_button(ack, body, client):
@@ -355,15 +357,11 @@ def handle_open_modal_button(ack, body, client):
 
 @app.action("add_task_button")
 def handle_add_task(ack, body, client):
-    """Adds a new task row to the modal."""
     ack()
-    user_id = body["user"]["id"]
-    trigger_id = body["trigger_id"]
     current_view = body["view"]
     metadata = json.loads(current_view.get("private_metadata", "{}"))
     num_tasks = int(body["actions"][0]["value"]) + 1
 
-    # Extract existing values from current modal state
     existing_tasks = []
     state_values = current_view["state"]["values"]
     for i in range(num_tasks - 1):
@@ -379,14 +377,12 @@ def handle_add_task(ack, body, client):
 
 @app.view("task_modal")
 def handle_task_submission(ack, body, client, view):
-    """Handles modal submission — logs tasks to sheet."""
     ack()
     user_id = body["user"]["id"]
     metadata = json.loads(view.get("private_metadata", "{}"))
     num_tasks = metadata.get("num_tasks", 1)
     state_values = view["state"]["values"]
 
-    # Build tasks and time string from modal inputs
     task_lines = []
     for i in range(num_tasks):
         task_val = state_values.get(f"task_block_{i}", {}).get(f"task_input_{i}", {}).get("value", "") or ""
@@ -404,31 +400,14 @@ def handle_task_submission(ack, body, client, view):
         session["tasks_and_time"] = tasks_and_time
         session.pop("awaiting_task_modal", None)
 
-        user_info = client.users_info(user=user_id)
-        user_name = user_info["user"]["real_name"]
-
-        try:
-            log_to_sheet(user_name, session)
-            client.chat_postMessage(
-                channel=user_id,
-                text=(
-                    f"✅ Logged! Here's your summary:\n\n"
-                    f"• *Client:* {session['client']}\n"
-                    f"• *Tasks & Time:*\n{tasks_and_time}\n"
-                    f"• *Blockers:* {session['blockers']}\n\n"
-                    f"📅 Logged for workday: *{get_workday_date()}*"
-                )
-            )
-        except Exception as e:
-            client.chat_postMessage(
-                channel=user_id,
-                text=f"⚠️ Something went wrong logging to Google Sheets: {str(e)}"
-            )
-
-        session["awaiting_another_client"] = True
+        # Ask blockers next
         client.chat_postMessage(
             channel=user_id,
-            text=build_another_client_question()
+            text=(
+                "*Question 3 of 3 — Any blockers or anything you need help with?*\n\n"
+                "A blocker is anything stopping you from making progress — a missing resource, a decision that needs to be made, or something you need from someone else.\n\n"
+                "Type *none* if everything is on track."
+            )
         )
 
 @app.command("/standup")
