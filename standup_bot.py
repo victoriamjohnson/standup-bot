@@ -112,10 +112,6 @@ def build_welcome_message():
     return (
         "😸 Hi! I'm *BRIEFI*, the Better Futures Institute's daily standup bot.\n\n"
         "I'll walk you through *3 quick questions* about your work today.\n\n"
-        "*Here's what to expect:*\n"
-        "1. Which client you worked on\n"
-        "2. What tasks you completed and how long each took\n"
-        "3. Any blockers or things you need help with\n\n"
         "If you worked on *multiple clients* today, I'll ask you to complete a standup for each one — I'll prompt you at the end.\n\n"
         "Made a mistake? Type *restart* at any time to start over.\n\n"
         "You have until *12pm tomorrow* to complete today's standup.\n\n"
