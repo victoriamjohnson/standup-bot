@@ -1,3 +1,5 @@
+<img src="slack_pfp.jpg" alt="BRIEFI" width="80" align="left" style="margin-right: 12px;"/>
+
 # BRIEFI — BFI Daily Standup Bot
 
 BRIEFI is a Slack bot built for the Better Futures Institute that conducts daily standups with each team member via DM and automatically logs their responses to a shared Google Sheet. Project managers can track hours per client, flag missing time entries, and monitor team progress — all without leaving Google Sheets.
