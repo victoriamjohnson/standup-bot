@@ -319,14 +319,32 @@ def handle_dm(message, client, say):
 
     elif next_key == "blockers":
         session["blockers"] = text
-        # Now open the task modal
-        say(
-            "Almost done! Click the button below to log your tasks and time spent 👇\n\n"
-            "💡 You can add as many tasks as you need using the *Add Task* button inside the form."
-        )
-        # Store a pending flag — modal will be opened via button
         session["tasks_and_time"] = "__PENDING__"
         session["awaiting_task_modal"] = True
+        # Send button using Block Kit so it renders as a real clickable button
+        say(
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "Almost done! Click the button below to log your tasks and time spent 👇\n\n💡 You can add as many tasks as you need using the *Add Task* button inside the form."
+                    }
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "📝 Enter Tasks"},
+                            "action_id": "open_task_modal_button",
+                            "style": "primary"
+                        }
+                    ]
+                }
+            ],
+            text="Almost done! Click the button below to log your tasks."
+        )
 
 @app.action("open_task_modal_button")
 def handle_open_modal_button(ack, body, client):
