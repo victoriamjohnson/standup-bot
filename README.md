@@ -24,7 +24,7 @@ After logging, BRIEFI asks if they worked on any other clients and loops through
 - Missing time entries flagged automatically for the project manager to follow up
 - Summary tab with hours per client broken down by today, this week, and total
 - `/standup` command for individuals to trigger their own standup anytime
-- `/standup-all` command to manually trigger standups for the whole `bfi-summer-2026` channel
+- `/standup-all` command to manually trigger standups for the whole channel
 - Hosted on Render with UptimeRobot keeping it live 24/7 on the free tier
 
 ---
@@ -34,7 +34,7 @@ After logging, BRIEFI asks if they worked on any other clients and loops through
 | Command | Description |
 |--------|-------------|
 | `/standup` | Start your own standup anytime |
-| `/standup-all` | Trigger standups for all members of bfi-summer-2026 |
+| `/standup-all` | Trigger standups for all members of your standup channel |
 
 ---
 
@@ -126,10 +126,10 @@ Set up one column:
 
 ```
 A1: Clients
-A2: VIA
-A3: SA Digital Connects (SADC)
-A4: Future Workforce Summit
-A5: General BFI
+A2: Client 1
+A3: Client 2
+A4: Client 3
+A5: Client 4
 A6: Other
 ```
 
@@ -220,6 +220,58 @@ GOOGLE_CREDENTIALS_JSON  ← paste the full contents of credentials.json here
 Set the build command to `pip install -r requirements.txt` and the start command to `python standup_bot.py`.
 
 To keep the free tier awake, create a free account at [uptimerobot.com](https://uptimerobot.com) and add an HTTP monitor pointing to your Render URL set to ping every 5 minutes.
+
+---
+
+## Using This for Your Own Organization
+
+This bot is built to be reused! If you want to set it up for your own team outside of BFI, here are the only things you need to change:
+
+### 1. Update the Slack channel
+
+In `standup_bot.py`, find this line near the top:
+
+```python
+STANDUP_CHANNEL_ID = "C0B7L91PYD7"
+```
+
+Replace it with your own channel ID. To find it, open your Slack channel, click the channel name at the top, and scroll to the bottom of the details panel — it starts with a `C`.
+
+### 2. Update the standup time
+
+Find this line in the scheduler:
+
+```python
+if now.weekday() < 5 and now.hour == 15 and now.minute == 0:
+```
+
+Change `15` (hour) and `0` (minute) to whatever time you want in 24-hour format. For example, 9:30am would be `now.hour == 9 and now.minute == 30`.
+
+### 3. Update the timezone
+
+Find this line:
+
+```python
+central = pytz.timezone("America/Chicago")
+```
+
+Replace `"America/Chicago"` with your timezone. Common options:
+- `"America/New_York"` — Eastern
+- `"America/Chicago"` — Central
+- `"America/Denver"` — Mountain
+- `"America/Los_Angeles"` — Pacific
+- `"Europe/London"` — GMT/BST
+- Full list at [en.wikipedia.org/wiki/List_of_tz_database_time_zones](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+
+### 4. Update your client list
+
+Go to the `Config` tab in your Google Sheet and replace the existing clients with your own. The bot picks them up automatically — no code changes needed.
+
+### 5. Rename the bot
+
+Go to [api.slack.com/apps](https://api.slack.com/apps), select your app, go to **Basic Information → Display Information**, and give it whatever name fits your organization.
+
+That's it — everything else works out of the box!
 
 ---
 
