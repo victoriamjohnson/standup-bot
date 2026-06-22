@@ -1,4 +1,4 @@
-<img src="slack_pfp.jpg" alt="BRIEFI" width="50" align="left" style="margin-right: 12px;"/>
+<img src="slack_pfp.jpg" alt="BRIEFI" width="70" align="left" style="margin-right: 12px;"/>
 
 # BRIEFI — BFI Daily Standup Bot
 
