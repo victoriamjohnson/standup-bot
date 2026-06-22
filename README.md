@@ -45,6 +45,7 @@ After logging, BRIEFI asks if they worked on any other clients and loops through
 ```
 standup-bot/
 ├── standup_bot.py       # Main bot code
+├── slack_pfp.py         # Profile picture
 ├── requirements.txt     # Python dependencies
 ├── .env                 # Secret tokens (not pushed to GitHub)
 ├── .gitignore           # Keeps secrets out of Git
@@ -55,7 +56,7 @@ standup-bot/
 
 ## Google Sheet Setup
 
-The bot uses a single Google Sheet with four tabs: **Sheet1**, **Parsed**, **Summary**, and **Config**.
+The bot uses a single Google Sheet with three tabs: **Sheet1**, **Summary**, and **Config**.
 
 ### Sheet1 — Main Data
 
@@ -69,25 +70,6 @@ The **Flag** column (F) automatically marks any entry missing a time value. Past
 
 ```
 =IF(D2="","",IF(REGEXMATCH(D2,"[0-9]+(h|min)"),"","⚠️ Missing time"))
-```
-
-### Parsed — Time Conversion
-
-This tab converts time entries like "3h" and "45min" into decimal hours for calculations. Set up three columns with these headers: `Date | Name | Hours`
-
-In A2:
-```
-=ARRAYFORMULA(IF(Sheet1!A2:A="","",Sheet1!A2:A))
-```
-
-In B2:
-```
-=ARRAYFORMULA(IF(Sheet1!B2:B="","",Sheet1!B2:B))
-```
-
-In C2 (converts all time formats to decimal hours):
-```
-=ARRAYFORMULA(IF(Sheet1!E2:E="","", IFERROR(SUMPRODUCT((IFERROR(REGEXEXTRACT(TRIM(SPLIT(Sheet1!E2:E,CHAR(10))),"([0-9]+)h")*1,0))+ (IFERROR(REGEXEXTRACT(TRIM(SPLIT(Sheet1!E2:E,CHAR(10))),"([0-9]+)min")/60,0))),0)))
 ```
 
 ### Summary — Hours by Client
