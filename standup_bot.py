@@ -2,12 +2,13 @@ import os
 import json
 import threading
 import gspread
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask import Flask
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from google.oauth2.service_account import Credentials
+import pytz
 
 # ─────────────────────────────────────────────
 # LOAD ENVIRONMENT VARIABLES
@@ -24,6 +25,22 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 # Channel ID for bfi-summer-2026
 STANDUP_CHANNEL_ID = "C0B7L91PYD7"
 
+# Timezone
+CENTRAL = pytz.timezone("America/Chicago")
+
+# ─────────────────────────────────────────────
+# WORKDAY DATE LOGIC
+# 12pm today to 11:59am tomorrow = same workday
+# ─────────────────────────────────────────────
+
+def get_workday_date():
+    now = datetime.now(CENTRAL)
+    if now.hour < 12:
+        workday = now - timedelta(days=1)
+    else:
+        workday = now
+    return workday.strftime("%Y-%m-%d")
+
 # ─────────────────────────────────────────────
 # TINY WEB SERVER (keeps Render happy on free tier)
 # ─────────────────────────────────────────────
@@ -32,7 +49,7 @@ flask_app = Flask(__name__)
 
 @flask_app.route("/")
 def home():
-    return "Standup bot is running!", 200
+    return "BRIEFI is running!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -60,12 +77,10 @@ def get_sheet():
     return client.open_by_key(SPREADSHEET_ID).sheet1
 
 def get_clients():
-    """Reads the client list from the Config tab in Google Sheets."""
     try:
         client = get_google_client()
         config_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Config")
         values = config_sheet.col_values(1)
-        # Skip the header row and filter out empty cells
         clients = [v.strip() for v in values[1:] if v.strip()]
         return clients if clients else ["General BFI"]
     except Exception as e:
@@ -75,7 +90,7 @@ def get_clients():
 def log_to_sheet(user_name, responses):
     sheet = get_sheet()
     row = [
-        datetime.now().strftime("%Y-%m-%d"),
+        get_workday_date(),
         user_name,
         responses.get("client", ""),
         responses.get("tasks_and_time", ""),
@@ -89,21 +104,99 @@ def log_to_sheet(user_name, responses):
 
 user_sessions = {}
 
-def build_client_question():
+RESTART_KEYWORDS = ["restart", "start over", "reset", "redo", "begin again"]
+
+def build_welcome_message():
     clients = get_clients()
     client_list = "\n".join([f"{i+1}. {c}" for i, c in enumerate(clients)])
-    return f"😸 Hello! Time for your daily standup.\n\n*Which client is this work for?*\n_If you worked on multiple clients today, complete this standup for each one — the bot will prompt you at the end!_\n\n{client_list}"
+    return (
+        "👋 Hi! I'm *BRIEFI*, your daily standup bot for the Better Futures Institute.\n\n"
+        "I'll ask you *3 quick questions* about your work today. It takes less than 2 minutes!\n\n"
+        "📋 If you worked on *multiple clients* today, don't worry — I'll ask you at the end if you need to log another one and walk you through it again.\n\n"
+        "💡 *Tip:* If you make a mistake at any point, just type *restart* to start over from the beginning.\n\n"
+        "⏰ You have until *12pm tomorrow* to complete this standup.\n\n"
+        "─────────────────────\n"
+        "Let's go! *Which client did you work on today?*\n\n"
+        f"{client_list}"
+    )
 
 def build_another_client_question():
     clients = get_clients()
     client_list = "\n".join([f"{i+1}. {c}" for i, c in enumerate(clients)])
-    return f"*Did you work on any other clients today?*\n\nType *no* if you're done, or pick another client:\n{client_list}"
+    return (
+        "*Did you work on any other clients today?*\n\n"
+        "Type *no* if you're all done, or pick another client below:\n\n"
+        f"{client_list}"
+    )
 
-QUESTIONS = [
-    ("client",         None),  # built dynamically from sheet
-    ("tasks_and_time", "*What tasks did you complete today and how long did you spend on each?*\n\nList each task on a new line:\n```Task name - 3h\nTask name - 45min```"),
-    ("blockers",       "*Any blockers or anything you need help with?* (type 'none' if all good 👍)")
-]
+def build_task_modal(num_tasks=1, existing_tasks=None, private_metadata=""):
+    """Builds the task entry modal with dynamic task rows."""
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "Add each task you completed today and how long it took.\n*Click 'Add Task' to add more rows.*"
+            }
+        },
+        {"type": "divider"}
+    ]
+
+    for i in range(num_tasks):
+        task_val = ""
+        time_val = ""
+        if existing_tasks and i < len(existing_tasks):
+            task_val = existing_tasks[i].get("task", "")
+            time_val = existing_tasks[i].get("time", "")
+
+        blocks.append({
+            "type": "input",
+            "block_id": f"task_block_{i}",
+            "optional": True,
+            "element": {
+                "type": "plain_text_input",
+                "action_id": f"task_input_{i}",
+                "placeholder": {"type": "plain_text", "text": "e.g. Fixed login bug"},
+                "initial_value": task_val
+            },
+            "label": {"type": "plain_text", "text": f"Task {i+1}"}
+        })
+        blocks.append({
+            "type": "input",
+            "block_id": f"time_block_{i}",
+            "optional": True,
+            "element": {
+                "type": "plain_text_input",
+                "action_id": f"time_input_{i}",
+                "placeholder": {"type": "plain_text", "text": "e.g. 2h or 45min"},
+                "initial_value": time_val
+            },
+            "label": {"type": "plain_text", "text": f"Time spent on Task {i+1}"}
+        })
+        blocks.append({"type": "divider"})
+
+    blocks.append({
+        "type": "actions",
+        "block_id": "add_task_block",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "➕ Add Task"},
+                "action_id": "add_task_button",
+                "value": str(num_tasks)
+            }
+        ]
+    })
+
+    return {
+        "type": "modal",
+        "callback_id": "task_modal",
+        "private_metadata": private_metadata,
+        "title": {"type": "plain_text", "text": "Today's Tasks"},
+        "submit": {"type": "plain_text", "text": "Submit"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": blocks
+    }
 
 # ─────────────────────────────────────────────
 # SLACK APP
@@ -112,13 +205,13 @@ QUESTIONS = [
 app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
 
 def get_next_question(session):
-    for key, text in QUESTIONS:
+    questions = ["client", "tasks_and_time", "blockers"]
+    for key in questions:
         if key not in session:
-            return key, text
-    return None, None
+            return key
+    return None
 
 def parse_client(text):
-    """Match a number or text to a client from the Config sheet."""
     clients = get_clients()
     text = text.strip()
     if text.isdigit():
@@ -132,7 +225,7 @@ def parse_client(text):
 
 def start_standup(user_id, client):
     user_sessions[user_id] = {"awaiting_another_client": False}
-    client.chat_postMessage(channel=user_id, text=build_client_question())
+    client.chat_postMessage(channel=user_id, text=build_welcome_message())
 
 def trigger_channel_standups(client):
     response = client.conversations_members(channel=STANDUP_CHANNEL_ID)
@@ -143,6 +236,14 @@ def trigger_channel_standups(client):
         if not user.get("is_bot") and not user.get("deleted") and user_id != "USLACKBOT":
             start_standup(user_id, client)
 
+def open_task_modal(client, trigger_id, user_id, num_tasks=1, existing_tasks=None):
+    """Opens the task entry modal."""
+    metadata = json.dumps({"user_id": user_id, "num_tasks": num_tasks})
+    client.views_open(
+        trigger_id=trigger_id,
+        view=build_task_modal(num_tasks, existing_tasks, private_metadata=metadata)
+    )
+
 @app.message("")
 def handle_dm(message, client, say):
     user_id = message["user"]
@@ -152,15 +253,26 @@ def handle_dm(message, client, say):
     if channel_type != "im":
         return
 
+    # Handle restart at any point
+    if text.lower() in RESTART_KEYWORDS:
+        user_sessions[user_id] = {"awaiting_another_client": False}
+        say("🔄 No problem! Let's start over from the beginning.\n\n" + build_welcome_message())
+        return
+
+    # No active session — start a new one
     if user_id not in user_sessions:
         start_standup(user_id, client)
         return
 
     session = user_sessions[user_id]
 
+    # Handle "another client?" follow-up
     if session.get("awaiting_another_client"):
         if text.lower() in ["no", "nope", "n", "done", "no thanks"]:
-            say("✅ All done! Thanks for your standups today, have a great rest of your day! 😺")
+            say(
+                "✅ All done! Thanks for completing your standup today.\n\n"
+                "Your responses have been logged. Have a great rest of your day! 👋"
+            )
             del user_sessions[user_id]
         else:
             blockers = session.get("blockers", "none")
@@ -170,10 +282,22 @@ def handle_dm(message, client, say):
             }
             session = user_sessions[user_id]
             session["client"] = parse_client(text)
-            say(QUESTIONS[1][1])
+            say(
+                "*What tasks did you complete for this client and how long did you spend on each?*\n\n"
+                "Click the button below to open the task form 👇",
+                attachments=[{
+                    "fallback": "Open task form",
+                    "callback_id": "open_task_modal",
+                    "actions": [{
+                        "type": "button",
+                        "text": "📝 Enter Tasks",
+                        "action_id": "open_task_modal_button"
+                    }]
+                }]
+            )
         return
 
-    next_key, _ = get_next_question(session)
+    next_key = get_next_question(session)
 
     if next_key is None:
         start_standup(user_id, client)
@@ -181,32 +305,113 @@ def handle_dm(message, client, say):
 
     if next_key == "client":
         session["client"] = parse_client(text)
-        # Ask the next question (tasks and time)
-        say(QUESTIONS[1][1])
-    else:
-        session[next_key] = text
-        next_key2, next_question = get_next_question(session)
+        # After client is selected, ask blockers first (tasks use modal)
+        say(
+            f"Got it — *{session['client']}*! ✅\n\n"
+            "*Any blockers or anything you need help with?*\n(Type *none* if you're all good 👍)"
+        )
+        # Skip tasks_and_time for now, mark blockers as next
+        session["tasks_and_time"] = "__PENDING__"
 
-        if next_question:
-            say(next_question)
-        else:
-            user_info = client.users_info(user=user_id)
-            user_name = user_info["user"]["real_name"]
+    elif next_key == "tasks_and_time":
+        # This shouldn't normally be hit since modal handles it
+        pass
 
-            try:
-                log_to_sheet(user_name, session)
-                say(
-                    f"✅ Logged!\n\n"
-                    f"*Summary:*\n"
+    elif next_key == "blockers":
+        session["blockers"] = text
+        # Now open the task modal
+        say(
+            "Almost done! Click the button below to log your tasks and time spent 👇\n\n"
+            "💡 You can add as many tasks as you need using the *Add Task* button inside the form."
+        )
+        # Store a pending flag — modal will be opened via button
+        session["tasks_and_time"] = "__PENDING__"
+        session["awaiting_task_modal"] = True
+
+@app.action("open_task_modal_button")
+def handle_open_modal_button(ack, body, client):
+    ack()
+    user_id = body["user"]["id"]
+    trigger_id = body["trigger_id"]
+    open_task_modal(client, trigger_id, user_id)
+
+@app.action("add_task_button")
+def handle_add_task(ack, body, client):
+    """Adds a new task row to the modal."""
+    ack()
+    user_id = body["user"]["id"]
+    trigger_id = body["trigger_id"]
+    current_view = body["view"]
+    metadata = json.loads(current_view.get("private_metadata", "{}"))
+    num_tasks = int(body["actions"][0]["value"]) + 1
+
+    # Extract existing values from current modal state
+    existing_tasks = []
+    state_values = current_view["state"]["values"]
+    for i in range(num_tasks - 1):
+        task_val = state_values.get(f"task_block_{i}", {}).get(f"task_input_{i}", {}).get("value", "") or ""
+        time_val = state_values.get(f"time_block_{i}", {}).get(f"time_input_{i}", {}).get("value", "") or ""
+        existing_tasks.append({"task": task_val, "time": time_val})
+
+    metadata["num_tasks"] = num_tasks
+    client.views_update(
+        view_id=current_view["id"],
+        view=build_task_modal(num_tasks, existing_tasks, private_metadata=json.dumps(metadata))
+    )
+
+@app.view("task_modal")
+def handle_task_submission(ack, body, client, view):
+    """Handles modal submission — logs tasks to sheet."""
+    ack()
+    user_id = body["user"]["id"]
+    metadata = json.loads(view.get("private_metadata", "{}"))
+    num_tasks = metadata.get("num_tasks", 1)
+    state_values = view["state"]["values"]
+
+    # Build tasks and time string from modal inputs
+    task_lines = []
+    for i in range(num_tasks):
+        task_val = state_values.get(f"task_block_{i}", {}).get(f"task_input_{i}", {}).get("value", "") or ""
+        time_val = state_values.get(f"time_block_{i}", {}).get(f"time_input_{i}", {}).get("value", "") or ""
+        if task_val.strip():
+            if time_val.strip():
+                task_lines.append(f"{task_val.strip()} - {time_val.strip()}")
+            else:
+                task_lines.append(task_val.strip())
+
+    tasks_and_time = "\n".join(task_lines) if task_lines else "No tasks entered"
+
+    if user_id in user_sessions:
+        session = user_sessions[user_id]
+        session["tasks_and_time"] = tasks_and_time
+        session.pop("awaiting_task_modal", None)
+
+        user_info = client.users_info(user=user_id)
+        user_name = user_info["user"]["real_name"]
+
+        try:
+            log_to_sheet(user_name, session)
+            client.chat_postMessage(
+                channel=user_id,
+                text=(
+                    f"✅ Logged! Here's your summary:\n\n"
                     f"• *Client:* {session['client']}\n"
-                    f"• *Tasks & Time:* {session['tasks_and_time']}\n"
-                    f"• *Blockers:* {session['blockers']}"
+                    f"• *Tasks & Time:*\n{tasks_and_time}\n"
+                    f"• *Blockers:* {session['blockers']}\n\n"
+                    f"📅 Logged for workday: *{get_workday_date()}*"
                 )
-            except Exception as e:
-                say(f"⚠️ Something went wrong logging to Google Sheets: {str(e)}")
+            )
+        except Exception as e:
+            client.chat_postMessage(
+                channel=user_id,
+                text=f"⚠️ Something went wrong logging to Google Sheets: {str(e)}"
+            )
 
-            session["awaiting_another_client"] = True
-            say(build_another_client_question())
+        session["awaiting_another_client"] = True
+        client.chat_postMessage(
+            channel=user_id,
+            text=build_another_client_question()
+        )
 
 @app.command("/standup")
 def handle_standup_command(ack, body, client):
@@ -224,16 +429,14 @@ def handle_standup_all_command(ack, body, client):
 # ─────────────────────────────────────────────
 
 def schedule_standups():
-    import pytz
     import schedule
     import time
     from slack_sdk import WebClient
 
     sdk_client = WebClient(token=SLACK_BOT_TOKEN)
-    central = pytz.timezone("America/Chicago")
 
     def check_and_trigger():
-        now = datetime.now(central)
+        now = datetime.now(CENTRAL)
         if now.weekday() < 5 and now.hour == 15 and now.minute == 0:
             trigger_channel_standups(sdk_client)
 
